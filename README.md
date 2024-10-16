@@ -1,88 +1,190 @@
 # TinderClone
-To create a dating app clone project using AWS, Terraform, and GitLab, you'll need to follow a structured approach. Below are the key steps involved, along with explanations on how to proceed with each step.
+Here's a detailed step-by-step guide for developing a dating app clone using **AWS**, **Terraform**, **GitLab**, and **Docker**:
 
-### 1. **Project Planning and Architecture**
-   - **Decide the Application Structure**: Your dating app will likely have a frontend (user interface) and a backend (for managing data and user interactions).
-   - **AWS Services**: Plan the AWS services required for your application:
-     - **Frontend**: Amazon S3 (for hosting a static website), Amazon CloudFront (for content delivery).
-     - **Backend**: Amazon EC2 or AWS Fargate (for Dockerized services), Amazon RDS or DynamoDB (for database management), Amazon Cognito (for user authentication), and Amazon SQS (for handling message queues).
-     - **Networking**: Amazon VPC, Route 53 (DNS management).
-     - **Monitoring**: CloudWatch for logging and monitoring.
+### **Step 1: Project Setup**
 
-### 2. **Create the Infrastructure Using Terraform**
-   - **Set up Terraform**: 
-     - Install Terraform locally on your machine.
-     - Create a directory structure for Terraform configurations (`main.tf`, `variables.tf`, etc.).
-   - **Write Terraform Configurations**: Use Terraform to define and provision AWS services like VPC, EC2 instances, S3 buckets, RDS, etc. Example:
+1. **Initialize your repository**:
+   - Create a **GitLab** repository for your project. Push the initial structure of your dating app project to this repo. If you're using GitLab, run the following commands to set up the Git repository:
+     ```bash
+     git init
+     git remote add origin https://gitlab.com/<your-username>/<repo-name>.git
+     git add .
+     git commit -m "Initial commit"
+     git push -u origin main
+     ```
 
-   ```hcl
-   provider "aws" {
-     region = "us-east-1"
-   }
+2. **Define Project Structure**:
+   - Divide the application into two tiers:
+     - **Frontend**: React/HTML5-based.
+     - **Backend**: Node.js, Python, or Java-based API using Express, Flask, or Spring.
+   - The `docker-compose.yml` will manage both tiers.
 
-   resource "aws_instance" "dating_app" {
-     ami           = "ami-0c55b159cbfafe1f0" # Ubuntu 20.04
-     instance_type = "t2.micro"
+### **Step 2: Dockerizing the Application**
 
-     tags = {
-       Name = "dating-app-backend"
+1. **Dockerfile for Backend**:
+   - Create a `Dockerfile` for the backend (e.g., for a Node.js API):
+     ```dockerfile
+     # Use Node.js as the base image
+     FROM node:14-alpine
+     WORKDIR /usr/src/app
+     COPY package*.json ./
+     RUN npm install
+     COPY . .
+     EXPOSE 3000
+     CMD ["npm", "start"]
+     ```
+
+2. **Dockerfile for Frontend**:
+   - Similarly, for a React frontend:
+     ```dockerfile
+     FROM node:14-alpine
+     WORKDIR /app
+     COPY package*.json ./
+     RUN npm install
+     COPY . .
+     EXPOSE 3000
+     CMD ["npm", "start"]
+     ```
+
+3. **Docker Compose Setup**:
+   - A `docker-compose.yml` file to connect both frontend and backend:
+     ```yaml
+     version: '3'
+     services:
+       backend:
+         build: ./backend
+         ports:
+           - "3001:3001"
+         depends_on:
+           - db
+       frontend:
+         build: ./frontend
+         ports:
+           - "3000:3000"
+         depends_on:
+           - backend
+       db:
+         image: mysql:5.7
+         environment:
+           MYSQL_ROOT_PASSWORD: rootpassword
+           MYSQL_DATABASE: dating_app
+           MYSQL_USER: user
+           MYSQL_PASSWORD: password
+         ports:
+           - "3306:3306"
+     ```
+
+4. **Running Docker Compose**:
+   - Use the following command to build and run both the frontend and backend services:
+     ```bash
+     docker-compose up --build
+     ```
+
+### **Step 3: AWS Integration**
+
+1. **Setting up an EC2 instance**:
+   - Use **Terraform** to automate the deployment of your EC2 instances where Docker will run.
+   - Example Terraform script:
+     ```hcl
+     provider "aws" {
+       region = "ap-south-1"
      }
-   }
-   ```
 
-   - **Deploy using Terraform**: 
-     - Run `terraform init` to initialize the configuration.
-     - Run `terraform apply` to deploy the infrastructure.
+     resource "aws_instance" "app" {
+       ami           = "ami-0c55b159cbfafe1f0" # Ubuntu 20.04 AMI
+       instance_type = "t2.micro"
+       key_name      = "your-key-pair"
 
-### 3. **GitLab CI/CD Integration**
-   - **Set up GitLab Repository**: 
-     - Create a repository on GitLab to store your code (frontend and backend).
-   - **Create `.gitlab-ci.yml`**: Write a CI/CD pipeline to automate testing, building, and deploying your application.
-     - **Build Stage**: Build Docker images of your frontend and backend.
-     - **Deploy Stage**: Push Docker images to AWS Elastic Container Registry (ECR) and deploy them to AWS Elastic Container Service (ECS) or EC2.
+       provisioner "remote-exec" {
+         inline = [
+           "sudo apt-get update -y",
+           "sudo apt-get install docker.io -y",
+           "sudo systemctl start docker",
+           "sudo systemctl enable docker"
+         ]
+       }
+     }
 
-   Example of a basic `.gitlab-ci.yml` for deployment:
-   ```yaml
-   stages:
-     - build
-     - deploy
+     output "ec2_public_ip" {
+       value = aws_instance.app.public_ip
+     }
+     ```
 
-   build:
-     script:
-       - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG .
-       - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+2. **Configuring AWS ECR (Elastic Container Registry)**:
+   - Store Docker images in AWS **ECR**. Push your Docker images to ECR using the following commands:
+     ```bash
+     aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin <aws_account_id>.dkr.ecr.<region>.amazonaws.com
+     docker tag <image_name>:latest <aws_account_id>.dkr.ecr.<region>.amazonaws.com/<repo_name>:latest
+     docker push <aws_account_id>.dkr.ecr.<region>.amazonaws.com/<repo_name>:latest
+     ```
 
-   deploy:
-     script:
-       - terraform init
-       - terraform apply -auto-approve
-   ```
+3. **Deploy to ECS (Elastic Container Service)**:
+   - Use **Terraform** to deploy Docker containers on ECS with Fargate, for serverless container management:
+     - **ECS Cluster** creation:
+       ```hcl
+       resource "aws_ecs_cluster" "dating_app_cluster" {
+         name = "dating-app-cluster"
+       }
+       ```
+     - **ECS Task Definition** to run the container:
+       ```hcl
+       resource "aws_ecs_task_definition" "dating_app" {
+         family                   = "dating-app-task"
+         network_mode             = "awsvpc"
+         requires_compatibilities = ["FARGATE"]
+         memory                   = "512"
+         cpu                      = "256"
 
-### 4. **Backend Development**
-   - **API Development**: Develop a backend in a language like Python (Flask/Django) or Node.js (Express) to handle user requests.
-   - **Database**: Use Amazon RDS for relational databases like PostgreSQL or DynamoDB for NoSQL.
-   - **Authentication**: Set up user login and registration using Amazon Cognito.
-   - **Deploy the Backend**: Package the backend in Docker, push the image to ECR, and deploy it using ECS or EC2.
+         container_definitions = jsonencode([
+           {
+             name      = "dating-app-backend",
+             image     = "<ecr_repo_url>:latest",
+             cpu       = 256,
+             memory    = 512,
+             essential = true,
+             portMappings = [
+               {
+                 containerPort = 3000
+                 hostPort      = 3000
+               }
+             ]
+           }
+         ])
+       }
+       ```
 
-### 5. **Frontend Development**
-   - **Frontend Design**: Build the frontend using React.js or any other framework. You can use AWS Amplify to host the frontend or deploy it to S3.
-   - **Connect to Backend API**: The frontend should interact with your backend API for login, swipe functionality, messaging, etc.
-   - **Deploy the Frontend**: Deploy the frontend to an S3 bucket and use CloudFront for better performance.
+### **Step 4: CI/CD with GitLab**
 
-### 6. **AWS ECS or EC2 for Hosting**
-   - **Dockerize Your Application**: Create Docker images for your frontend and backend.
-     - Write `Dockerfile` for both applications.
-   - **Push to ECR**: 
-     - Use `docker build` to build the images and `docker push` to push them to ECR.
-   - **Deploy on ECS**:
-     - Create an ECS cluster and define task definitions to run your Docker containers.
+1. **GitLab CI/CD Pipeline**:
+   - Create a `.gitlab-ci.yml` file to automate the deployment.
+   - Here’s an example to build the Docker image and push it to ECR, then deploy it to ECS:
+     ```yaml
+     stages:
+       - build
+       - deploy
 
-### 7. **Monitoring and Logging**
-   - **CloudWatch**: Set up CloudWatch for monitoring your ECS tasks, EC2 instances, and application logs.
-   - **Alarms**: Create alarms to notify you if any service goes down or exceeds usage thresholds.
+     build_job:
+       stage: build
+       script:
+         - docker build -t dating-app-backend .
+         - docker tag dating-app-backend:latest <aws_account_id>.dkr.ecr.<region>.amazonaws.com/dating-app-backend:latest
+         - $(aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin <aws_account_id>.dkr.ecr.<region>.amazonaws.com)
+         - docker push <aws_account_id>.dkr.ecr.<region>.amazonaws.com/dating-app-backend:latest
 
-### 8. **Testing and Final Touches**
-   - **Test the Application**: Ensure all functionality is working (e.g., user authentication, profile creation, swipe, chat).
-   - **Optimize the Infrastructure**: Fine-tune the EC2 instance types, scaling options, and S3 settings.
+     deploy_job:
+       stage: deploy
+       script:
+         - aws ecs update-service --cluster dating-app-cluster --service dating-app-service --force-new-deployment
+     ```
 
-By following these steps, you will be able to containerize and deploy a two-tier dating app clone using AWS services, Terraform for infrastructure management, and GitLab CI/CD for automation. Let me know if you need further clarification on any step!
+### **Step 5: Monitoring and Logging**
+
+1. **Set up CloudWatch**:
+   - For monitoring your ECS containers, configure **CloudWatch Logs** to monitor the logs of your application.
+   - Set up **CloudWatch Alarms** to notify you of CPU/memory threshold breaches in ECS.
+
+### **Conclusion**
+
+This project setup gives you full control over the infrastructure and deployment of a 2-tier dating app using AWS services, automated with **Terraform** and **GitLab CI/CD**, and containerized with **Docker** and **Docker Compose**.
+
+By following these steps, you'll get a hands-on understanding of how to implement a cloud-native application using industry-standard tools.
